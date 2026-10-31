@@ -225,3 +225,23 @@ jio-jcow414-openwrt/
 ├── seed.config                     # Minimal seed configuration for defconfig
 └── README.md
 ```
+
+---
+
+## Credits & Acknowledgements
+
+This project builds upon the hard work, reverse engineering, and contributions of the open-source router community:
+
+- **[Sirherobrine23](https://github.com/Sirherobrine23)**: Foundational work porting the EcoNet / Airoha EN7528 target to modern OpenWrt and Linux 6.x.
+- **[animasoul](https://github.com/animasoul)** & **[stich81](https://github.com/stich81)**: Groundbreaking reverse engineering of the EcoNet xPON kernel stack, IOCTL dispatcher, and `econet-omcid` daemon.
+- **[OpenWrt Project](https://openwrt.org)**: The bedrock open-source embedded Linux operating system and package ecosystem.
+- **IndiaBroadband & BroadbandForum Community**: Researchers and enthusiasts who documented Sercomm configuration encryption keys, root unlock vectors, and partition layouts on JioFiber hardware.
+- **EcoNet / Airoha / MediaTek**: Original platform BSP, kernel drivers, and GPL source releases.
+
+---
+
+## License & Disclaimer
+
+- This is an independent open-source project and is **not** affiliated with, endorsed by, or sponsored by Reliance Jio Infocomm Ltd. or Sercomm Corporation.
+- Licensed under the **GNU General Public License v2.0 (GPL-2.0)**.
+
