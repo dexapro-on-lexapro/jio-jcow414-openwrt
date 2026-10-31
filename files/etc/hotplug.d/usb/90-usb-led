@@ -1,0 +1,12 @@
+#!/bin/sh
+# Hotplug script to blink Blue LED briefly when any USB device is attached
+
+if [ "$ACTION" = "add" ]; then
+	if [ -d /sys/class/leds/blue:status ]; then
+		# Pulse the blue LED briefly to confirm hardware detection
+		for i in 1 0 1 0; do
+			echo $i > /sys/class/leds/blue:status/brightness
+			sleep 0.1
+		done
+	fi
+fi

@@ -1,0 +1,27 @@
+From: OpenWrt JCOW414 build <build@local>
+Subject: [PATCH 2/2] feeds/packages: glib2 — assemble vendored libffi with MIPS16 disabled
+
+glib2 2.88.x vendors libffi 3.5.2 whose mips/o32.S fails to assemble on
+the mipsel_24kc target with:
+
+    .cprestore not supported in MIPS16 mode
+    invalid operands `move $fp,$sp` / `sw $4,offset($fp)`
+
+The assembler enters MIPS16 mode for the hand-written .S and rejects
+standard MIPS o32 mnemonics. Force the legacy encoding with
+-mno-mips16 for the whole package (the .S is compiled through the
+target C compiler, which inherits CFLAGS).
+
+---
+ a/feeds/packages/libs/glib2/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+--- a/feeds/packages/libs/glib2/Makefile
++++ b/feeds/packages/libs/glib2/Makefile
+@@ -20,6 +20,7 @@
+ PKG_CPE_ID:=cpe:/a:gnome:glib
+
+ PKG_BUILD_DIR:=$(BUILD_DIR)/glib-$(PKG_VERSION)
++TARGET_CFLAGS += -mno-mips16
+ PKG_CONFIG_DEPENDS:=CONFIG_BUILD_NLS
+ PKG_FORTIFY_SOURCE:=0
+ PKG_BUILD_FLAGS:=gc-sections

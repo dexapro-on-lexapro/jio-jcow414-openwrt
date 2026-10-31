@@ -1,0 +1,62 @@
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fd00::/48'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'lan1'
+	list ports 'lan2'
+	list ports 'lan3'
+	list ports 'lan4'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '192.168.1.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+
+# Primary USB Tethering Interface (Android RNDIS / iOS ipheth / CDC-Ether)
+config interface 'tether'
+	option device 'usb0'
+	option proto 'dhcp'
+	option metric '10'
+
+# Alternate USB Tethering Interface (Qualcomm / QMI / MBIM modems)
+config interface 'tether_alt'
+	option device 'wwan0'
+	option proto 'dhcp'
+	option metric '15'
+
+# Second USB Port / Secondary USB NIC
+config interface 'tether_eth1'
+	option device 'eth1'
+	option proto 'dhcp'
+	option metric '20'
+
+# GPON fiber WAN (econet-xpon driver netdev on VLAN 1015 for JioFiber).
+# The device is dynamically brought up on VLAN 1015 once the econet-xpon
+# driver and omcid range to O5 with the Jio OLT.
+config device
+	option name 'ponwan0.1015'
+	option type '8021q'
+	option ifname 'ponwan0'
+	option vid '1015'
+
+config interface 'pon'
+	option device 'ponwan0.1015'
+	option proto 'dhcp'
+	option metric '5'
+
+config interface 'pon6'
+	option device 'ponwan0.1015'
+	option proto 'dhcpv6'
+	option reqaddress 'try'
+	option reqprefix 'auto'
+	option metric '5'

@@ -1,0 +1,7 @@
+services:
+  openwrt-builder:
+    build: .
+    volumes:
+      - .:/home/builder/workspace
+    working_dir: /home/builder/workspace
+    command: ["./build.sh"]

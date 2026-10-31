@@ -1,0 +1,31 @@
+#!/bin/sh
+# Hotplug script to handle USB Tethering network devices and LED indicators
+
+[ "$ACTION" = "add" ] || [ "$ACTION" = "remove" ] || exit 0
+
+case "$DEVICENAME" in
+	usb[0-9]|wwan[0-9]|eth[1-9])
+		if [ "$ACTION" = "add" ]; then
+			logger -t usb-tether "USB tethering device $DEVICENAME connected."
+			# Trigger interface reload so ubus/netifd picks it up immediately
+			ifup tether 2>/dev/null
+			ifup tether_alt 2>/dev/null
+			ifup tether_eth1 2>/dev/null
+
+			# Attach Blue LED to network activity trigger for this interface
+			if [ -d /sys/class/leds/blue:status ]; then
+				echo netdev > /sys/class/leds/blue:status/trigger 2>/dev/null
+				echo "$DEVICENAME" > /sys/class/leds/blue:status/device_name 2>/dev/null
+				echo 1 > /sys/class/leds/blue:status/link 2>/dev/null
+				echo 1 > /sys/class/leds/blue:status/rx 2>/dev/null
+				echo 1 > /sys/class/leds/blue:status/tx 2>/dev/null
+			fi
+		elif [ "$ACTION" = "remove" ]; then
+			logger -t usb-tether "USB tethering device $DEVICENAME disconnected."
+			if [ -d /sys/class/leds/blue:status ]; then
+				echo none > /sys/class/leds/blue:status/trigger 2>/dev/null
+				echo 0 > /sys/class/leds/blue:status/brightness 2>/dev/null
+			fi
+		fi
+		;;
+esac

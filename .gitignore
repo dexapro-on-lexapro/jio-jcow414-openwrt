@@ -1,0 +1,14 @@
+# Large compiled binaries and output artifacts
+output/
+openwrt-source/
+*.trx
+*.bin
+*.manifest
+sha256sums
+release_artifacts/
+
+# System and temporary files
+.DS_Store
+*.log
+*.bak
+*.tmp

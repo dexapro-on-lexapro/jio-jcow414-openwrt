@@ -1,0 +1,70 @@
+#!/bin/sh
+# Hotplug script to automatically mount/unmount USB storage devices
+
+case "$ACTION" in
+	add)
+		# Skip non-partition block devices unless no partition table exists
+		[ -z "$DEVNAME" ] && exit 0
+		echo "$DEVNAME" | grep -q "^sd[a-z][0-9]" || exit 0
+
+		# Wait for device node
+		sleep 1
+
+		DEVICE="/dev/$DEVNAME"
+		MOUNT_DIR="/mnt/$DEVNAME"
+
+		# If disk has a label, use label instead
+		LABEL=$(blkid -s LABEL -o value "$DEVICE" 2>/dev/null)
+		if [ -n "$LABEL" ]; then
+			MOUNT_DIR="/mnt/$LABEL"
+		fi
+
+		mkdir -p "$MOUNT_DIR"
+
+		# Detect filesystem
+		FS_TYPE=$(blkid -s TYPE -o value "$DEVICE" 2>/dev/null)
+
+		case "$FS_TYPE" in
+			ext4|ext3|ext2)
+				mount -o rw,noatime "$DEVICE" "$MOUNT_DIR"
+				;;
+			vfat)
+				mount -o rw,umask=000,iocharset=utf8 "$DEVICE" "$MOUNT_DIR"
+				;;
+			exfat)
+				mount -o rw,umask=000,iocharset=utf8 "$DEVICE" "$MOUNT_DIR"
+				;;
+			ntfs)
+				# Try in-kernel ntfs3 first, then fallback
+				mount -t ntfs3 -o rw,force,iocharset=utf8 "$DEVICE" "$MOUNT_DIR" 2>/dev/null || \
+				mount -t ntfs -o rw "$DEVICE" "$MOUNT_DIR" 2>/dev/null
+				;;
+			*)
+				mount "$DEVICE" "$MOUNT_DIR"
+				;;
+		esac
+
+		if [ $? -eq 0 ]; then
+			logger -t usb-storage "Mounted $DEVICE ($FS_TYPE) at $MOUNT_DIR"
+			# Pulse blue LED on successful mount
+			if [ -d /sys/class/leds/blue:status ]; then
+				echo 1 > /sys/class/leds/blue:status/brightness
+			fi
+		else
+			rmdir "$MOUNT_DIR" 2>/dev/null
+			logger -t usb-storage "Failed to mount $DEVICE ($FS_TYPE)"
+		fi
+		;;
+
+	remove)
+		[ -z "$DEVNAME" ] && exit 0
+		echo "$DEVNAME" | grep -q "^sd[a-z][0-9]" || exit 0
+
+		MOUNTED_PATH=$(grep "^/dev/$DEVNAME " /proc/mounts | awk '{print $2}')
+		if [ -n "$MOUNTED_PATH" ]; then
+			umount -l "$MOUNTED_PATH"
+			rmdir "$MOUNTED_PATH" 2>/dev/null
+			logger -t usb-storage "Unmounted /dev/$DEVNAME from $MOUNTED_PATH"
+		fi
+		;;
+esac
