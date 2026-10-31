@@ -8,7 +8,7 @@
 An independent, modern **OpenWrt** firmware build system for the **Sercomm JioFiber JCOW414** (and sibling **JioFiber JCO4032**) Home Gateway router.
 
 > [!NOTE]
-> This project is continued from the original **`JFC-Group/jiofiber-jcow414-openwrt`** community repository, expanded with functional GPON (VLAN 1015), automated flash credential provisioning (`jio-gpon-provision`), and kernel 6.18 upstream integration.
+> This project is continued from the original **[`Asjohn720/jiofiber-jcow414-openwrt`](https://github.com/Asjohn720/jiofiber-jcow414-openwrt)** (and **[`JFC-Group/jiofiber-jcow414-openwrt`](https://github.com/JFC-Group/jiofiber-jcow414-openwrt)**) community repository, expanded with functional GPON (VLAN 1015), automated flash credential provisioning (`jio-gpon-provision`), and kernel 6.18 upstream integration.
 
 This repository tracks the latest upstream OpenWrt platform tree with EcoNet / Airoha support (`Sirherobrine23/openwrt` branch `airoha`, Linux 6.18 kernel), pre-configured with:
 * 📱 **Full USB Tethering Support:** Android (RNDIS), Apple iPhone (ipheth / usbmuxd), generic CDC-Ethernet, modern CDC-NCM, Huawei NCM, and Qualcomm QMI / CDC-MBIM 4G/5G modems with plug-and-play network routing.
@@ -231,21 +231,29 @@ jio-jcow414-openwrt/
 
 ---
 
-## Credits & Acknowledgements
+## Author & Credits
 
-This project builds upon the hard work, reverse engineering, and contributions of the open-source router community:
+This project stands on the shoulders of the open-source router and hardware reverse-engineering community:
 
-- **[JFC-Group](https://github.com/JFC-Group)** (`JFC-Group/jiofiber-jcow414-openwrt`): The original community fork and repository that created the initial JCOW414 rootfs overlays, USB tethering hotplug scripts, `jiofiber_root_unlocker.py`, and device packaging.
-- **[Sirherobrine23](https://github.com/Sirherobrine23)**: Foundational work porting the EcoNet / Airoha EN7528 target to modern OpenWrt and Linux 6.x.
-- **[animasoul](https://github.com/animasoul)** & **[stich81](https://github.com/stich81)**: Groundbreaking reverse engineering of the EcoNet xPON kernel stack, IOCTL dispatcher, and `econet-omcid` daemon.
-- **[OpenWrt Project](https://openwrt.org)**: The bedrock open-source embedded Linux operating system and package ecosystem.
-- **IndiaBroadband & BroadbandForum Community**: Researchers and enthusiasts who documented Sercomm configuration encryption keys, root unlock vectors, and partition layouts on JioFiber hardware.
-- **EcoNet / Airoha / MediaTek**: Original platform BSP, kernel drivers, and GPL source releases.
+- **Anand ([@Asjohn720](https://github.com/Asjohn720))** (`Asjohn720/jiofiber-jcow414-openwrt`) — Original author: Device Tree Source (`en7528-sercomm-jcow414.dts`), kernel memory mapping, dual-bank packaging, and initial OpenWrt compilation.
+- **[JFC-Group](https://github.com/JFC-Group)** (`JFC-Group/jiofiber-jcow414-openwrt`) — Community organization fork, rootfs overlays, USB tethering hotplug scripts, `jiofiber_root_unlocker.py`, and device packaging.
+- **zke-7D6 ([zke-7D6/jio-jcow414-research](https://github.com/zke-7D6/jio-jcow414-research))** — Initial JCOW414 hardware teardown, UART serial pinout analysis, and bootloader research.
+- **gpsarathy ([gpsarathy/JioFiber-Home-Gateway](https://github.com/gpsarathy/JioFiber-Home-Gateway))** — Static firmware decryption keys archive and JioFiber Home Gateway research.
+- **[Sirherobrine23](https://github.com/Sirherobrine23)** (`Sirherobrine23/openwrt`) — Foundational work porting the EcoNet / Airoha EN7528 target tree to modern OpenWrt and Linux 6.x.
+- **[animasoul](https://github.com/animasoul)** & **[stich81](https://github.com/stich81)** — Groundbreaking reverse engineering of the EcoNet xPON kernel stack, IOCTL dispatcher, and `econet-omcid` daemon.
+- **[OpenWrt Project](https://openwrt.org)** — The extensible open-source Linux operating system for embedded routers.
+- **Airoha / EcoNet Linux Developers** — Platform BSP, GPL releases, and kernel 6.x EcoNet EN75xx platform staging tree.
+- **IndiaBroadband & BroadbandForum Community** — Community members who documented Sercomm configuration encryption keys, root unlock vectors, and partition layouts on JioFiber hardware.
 
 ---
 
-## License & Disclaimer
+## Legal Disclaimer & Fair Use Notice
 
-- This is an independent open-source project and is **not** affiliated with, endorsed by, or sponsored by Reliance Jio Infocomm Ltd. or Sercomm Corporation.
+This project is an independent academic, educational, and hardware preservation initiative conducted strictly on privately owned, fully paid consumer hardware:
+
+- **Lawful Interoperability**: Research and development are carried out under lawful interoperability doctrines (including Section 52(1)(ab) of the Indian Copyright Act, 1957, and international Fair Use principles permitting reverse engineering solely for achieving interoperability).
+- **No ISP Infrastructure Targeted**: At no point was any telecommunications infrastructure, ISP network, optical line terminal (OLT), authentication server, or subscriber database accessed, modified, or compromised. This project does NOT bypass ISP billing, does NOT grant unauthorized network access, and does NOT interact with any live telecommunications backend.
+- **100% Open Source Software**: No proprietary vendor code or encrypted copyrighted intellectual property is hosted or distributed by this repository. OpenWrt is a free, independently developed operating system governed by the GNU General Public License (GPL).
+- **Trademarks**: All brand names, logos, and trademarks (including "Jio", "JioFiber", "Reliance", and "Sercomm") are the property of their respective owners and are used here purely for nominative hardware identification.
 - Licensed under the **GNU General Public License v2.0 (GPL-2.0)**.
 
