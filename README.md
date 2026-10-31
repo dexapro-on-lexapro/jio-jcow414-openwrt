@@ -7,6 +7,9 @@
 
 An independent, modern **OpenWrt** firmware build system for the **Sercomm JioFiber JCOW414** (and sibling **JioFiber JCO4032**) Home Gateway router.
 
+> [!NOTE]
+> This project is continued from the original **`JFC-Group/jiofiber-jcow414-openwrt`** community repository, expanded with functional GPON (VLAN 1015), automated flash credential provisioning (`jio-gpon-provision`), and kernel 6.18 upstream integration.
+
 This repository tracks the latest upstream OpenWrt platform tree with EcoNet / Airoha support (`Sirherobrine23/openwrt` branch `airoha`, Linux 6.18 kernel), pre-configured with:
 * 📱 **Full USB Tethering Support:** Android (RNDIS), Apple iPhone (ipheth / usbmuxd), generic CDC-Ethernet, modern CDC-NCM, Huawei NCM, and Qualcomm QMI / CDC-MBIM 4G/5G modems with plug-and-play network routing.
 * 💾 **USB Storage & High-Speed NAS:** Support for NTFS (in-kernel `ntfs3`), ext4, exFAT, and FAT32, automatic drive mounting to `/mnt/`, and low-overhead kernel SMB3 file sharing via `ksmbd-server` + `luci-app-ksmbd` and hard disk idle spindown (`luci-app-hd-idle`).
@@ -232,6 +235,7 @@ jio-jcow414-openwrt/
 
 This project builds upon the hard work, reverse engineering, and contributions of the open-source router community:
 
+- **[JFC-Group](https://github.com/JFC-Group)** (`JFC-Group/jiofiber-jcow414-openwrt`): The original community fork and repository that created the initial JCOW414 rootfs overlays, USB tethering hotplug scripts, `jiofiber_root_unlocker.py`, and device packaging.
 - **[Sirherobrine23](https://github.com/Sirherobrine23)**: Foundational work porting the EcoNet / Airoha EN7528 target to modern OpenWrt and Linux 6.x.
 - **[animasoul](https://github.com/animasoul)** & **[stich81](https://github.com/stich81)**: Groundbreaking reverse engineering of the EcoNet xPON kernel stack, IOCTL dispatcher, and `econet-omcid` daemon.
 - **[OpenWrt Project](https://openwrt.org)**: The bedrock open-source embedded Linux operating system and package ecosystem.
