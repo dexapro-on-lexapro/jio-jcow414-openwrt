@@ -2,9 +2,10 @@
 # ==============================================================================
 # Jio JCOW414 Hardware Factory Identity Auto-Provisioner
 # ==============================================================================
-# Reads the factory GPON Serial Number from /dev/mtdblock13 (reservearea @ 0x1400ac)
-# and factory MAC address from /dev/mtdblock0 (bootloader @ 0x3fe48).
-# Automatically provisions UCI (econet-xpon.identity) on first boot.
+# 1. Reads factory GPON Serial Number & Password from /dev/mtd1 (romfile: ctromfile.cfg).
+#    Standard format on Sercomm/Jio: "SCOM" + last 4 bytes of MAC (e.g. SCOM994CF513).
+# 2. Fallback: derives GPON SN from bootloader factory MAC (/dev/mtd0 @ 0x3fe48).
+# 3. Automatically provisions UCI (econet-xpon.identity) on first boot.
 # ==============================================================================
 
 START=39
@@ -16,6 +17,7 @@ boot() {
 
 start() {
 	local sn=""
+	local pw=""
 	local mac=""
 	local cur_sn=""
 
@@ -24,32 +26,56 @@ start() {
 		cur_sn=$(uci -q get econet-xpon.identity.gpon_sn || true)
 	fi
 
-	if [ -n "$cur_sn" ]; then
+	# Ignore invalid default or chassis serials (e.g. RSVO... is chassis, not GPON SN)
+	if [ -n "$cur_sn" ] && [ "$cur_sn" != "MTKG00000001" ] && ! echo "$cur_sn" | grep -q '^RSVO'; then
 		logger -t jio-gpon-provision "GPON Serial already configured: $cur_sn"
 		return 0
 	fi
 
-	logger -t jio-gpon-provision "First boot detected: probing factory MTD partitions..."
+	logger -t jio-gpon-provision "Probing factory MTD partitions for GPON identity..."
 
-	# 1. Read Serial Number from mtdblock13 (reservearea offset 0x1400ac, 15 chars)
-	if [ -e /dev/mtdblock13 ]; then
-		sn=$(dd if=/dev/mtdblock13 bs=1 skip=1310892 count=15 2>/dev/null | tr -cd '[:alnum:]')
-	elif [ -e /dev/mtd13ro ]; then
-		sn=$(dd if=/dev/mtd13ro bs=1 skip=1310892 count=15 2>/dev/null | tr -cd '[:alnum:]')
+	# 1. Read Factory MAC from mtd0 (bootloader offset 0x3fe48, 6 bytes)
+	local mtd0_dev=""
+	for dev in /dev/mtdblock0 /dev/mtd0ro /dev/mtd0; do
+		if [ -e "$dev" ]; then
+			mtd0_dev="$dev"
+			break
+		fi
+	done
+
+	if [ -n "$mtd0_dev" ]; then
+		mac=$(hexdump -v -s 261704 -n 6 -e '5/1 "%02x:" 1/1 "%02x"' "$mtd0_dev" 2>/dev/null)
 	fi
 
-	# Fallback search if offset shifted
-	if [ -z "$sn" ] || [ ${#sn} -lt 12 ]; then
-		if [ -e /dev/mtdblock13 ]; then
-			sn=$(strings /dev/mtdblock13 2>/dev/null | grep -E '^(RSVO|SRCM|JSCM)[A-Z0-9]{8,12}' | head -n 1)
+	# 2. Primary extraction: read ctromfile.cfg from mtd1 (romfile)
+	local mtd1_dev=""
+	for dev in /dev/mtdblock1 /dev/mtd1ro /dev/mtd1; do
+		if [ -e "$dev" ]; then
+			mtd1_dev="$dev"
+			break
+		fi
+	done
+
+	if [ -n "$mtd1_dev" ]; then
+		local romcfg
+		romcfg=$(gzip -dc "$mtd1_dev" 2>/dev/null | tar -xO ctromfile.cfg 2>/dev/null || true)
+		if [ -n "$romcfg" ]; then
+			sn=$(echo "$romcfg" | grep -o 'SerialNumber="[^"]*"' | head -n 1 | cut -d'"' -f2)
+			pw=$(echo "$romcfg" | grep -o 'Password="[^"]*"' | head -n 1 | cut -d'"' -f2)
+			logger -t jio-gpon-provision "Extracted identity from ctromfile.cfg: SN=$sn, PW=$pw"
 		fi
 	fi
 
-	# 2. Read Factory MAC from mtdblock0 (bootloader offset 0x3fe48, 6 bytes)
-	if [ -e /dev/mtdblock0 ]; then
-		mac=$(hexdump -v -s 261704 -n 6 -e '5/1 "%02x:" 1/1 "%02x"' /dev/mtdblock0 2>/dev/null)
-	elif [ -e /dev/mtd0ro ]; then
-		mac=$(hexdump -v -s 261704 -n 6 -e '5/1 "%02x:" 1/1 "%02x"' /dev/mtd0ro 2>/dev/null)
+	# 3. Fallback: derive Sercomm GPON SN from base MAC (SCOM + last 4 octets in uppercase hex)
+	if [ -z "$sn" ] || [ ${#sn} -lt 12 ] || echo "$sn" | grep -q '^RSVO'; then
+		if [ -n "$mac" ]; then
+			local mac_clean
+			mac_clean=$(echo "$mac" | tr -d ':' | tr '[:lower:]' '[:upper:]')
+			local last8="${mac_clean:4:8}"
+			sn="SCOM${last8}"
+			[ -z "$pw" ] && pw="00000001"
+			logger -t jio-gpon-provision "Derived GPON identity from MAC: SN=$sn, PW=$pw"
+		fi
 	fi
 
 	# Calculate WAN MAC (LAN MAC + 1) if valid MAC found
@@ -69,12 +95,12 @@ start() {
 	fi
 
 	if [ -n "$sn" ]; then
-		logger -t jio-gpon-provision "Found factory GPON Serial: $sn"
-		[ -n "$wan_mac" ] && logger -t jio-gpon-provision "Found factory WAN MAC: $wan_mac"
+		logger -t jio-gpon-provision "Setting GPON Serial: $sn (Password: ${pw:-none}, WAN MAC: $wan_mac)"
 
 		if command -v uci >/dev/null 2>&1; then
 			uci -q set econet-xpon.identity=identity || true
 			uci set econet-xpon.identity.gpon_sn="$sn"
+			[ -n "$pw" ] && uci set econet-xpon.identity.gpon_pw="$pw"
 			[ -n "$wan_mac" ] && uci set econet-xpon.identity.wan_mac="$wan_mac"
 			uci commit econet-xpon
 			logger -t jio-gpon-provision "Successfully provisioned factory identity to UCI (econet-xpon)"

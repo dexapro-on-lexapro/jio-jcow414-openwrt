@@ -80,8 +80,10 @@ The driver stays unloaded until a valid ONU serial is set — by design, so the 
 
 ```sh
 # LuCI: Network -> GPON -> GPON Identity, or via SSH:
-uci set econet-xpon.identity.gpon_sn='<ONU-SERIAL>'    # e.g. JSCM12345678
-uci set econet-xpon.identity.wan_mac='<WAN-MAC>'       # optional; defaults derived from device MAC
+# For Sercomm JCOW414 / JCO4032, the GPON SN is 'SCOM' + the last 4 octets of the device MAC (8 hex chars uppercase):
+uci set econet-xpon.identity.gpon_sn='SCOM994CF513'    # Replace 994CF513 with your router's MAC suffix
+uci set econet-xpon.identity.gpon_pw='00000001'        # Jio GPON PLOAM default password
+uci set econet-xpon.identity.wan_mac='8C:A3:99:4C:F5:13' # Base MAC or WAN MAC
 uci commit econet-xpon
 reboot
 ```
