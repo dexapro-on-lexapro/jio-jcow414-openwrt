@@ -4,11 +4,16 @@
 [![Kernel](https://img.shields.io/badge/Kernel-Linux%206.18-green.svg)](https://kernel.org)
 [![Flash Protection](https://img.shields.io/badge/Flash-Dual--Bank%20Fail--Safe-brightgreen.svg)](#dual-bank-failsafe--zero-brick-rollback)
 [![License](https://img.shields.io/badge/License-GPL--2.0-blue.svg)](LICENSE)
+[![GPON Status](https://img.shields.io/badge/GPON-STUCK%20AT%20O3%20(NOT%20WORKING)-red.svg)](#gpon-fiber-wan-xpon-port-wip--not-working)
+
+> [!CAUTION]
+> # **⚠️ GPON STILL DOES NOT WORK AND IS STUCK AT LEVEL O3**
+> **GPON fiber WAN is currently NON-FUNCTIONAL on the Sercomm JCOW414. The driver fails optical/PLOAM activation and remains stuck at state O3 (Serial_Number).** Do NOT flash this build expecting a working fiber WAN connection. USB tethering remains the only working WAN uplink at this stage.
 
 An independent, modern **OpenWrt** firmware build system for the **Sercomm JioFiber JCOW414** (and sibling **JioFiber JCO4032**) Home Gateway router.
 
 > [!NOTE]
-> This project is continued from the original **[`Asjohn720/jiofiber-jcow414-openwrt`](https://github.com/Asjohn720/jiofiber-jcow414-openwrt)** (and **[`JFC-Group/jiofiber-jcow414-openwrt`](https://github.com/JFC-Group/jiofiber-jcow414-openwrt)**) community repository, expanded with functional GPON (VLAN 1015), automated flash credential provisioning (`jio-gpon-provision`), and kernel 6.18 upstream integration.
+> This project is continued from the original **[`Asjohn720/jiofiber-jcow414-openwrt`](https://github.com/Asjohn720/jiofiber-jcow414-openwrt)** (and **[`JFC-Group/jiofiber-jcow414-openwrt`](https://github.com/JFC-Group/jiofiber-jcow414-openwrt)**) community repository, integrating experimental GPON driver support (WIP — **stuck at O3**), automated flash credential provisioning (`jio-gpon-provision`), and kernel 6.18 upstream integration.
 
 This repository tracks the latest upstream OpenWrt platform tree with EcoNet / Airoha support (`Sirherobrine23/openwrt` branch `airoha`, Linux 6.18 kernel), pre-configured with:
 * 📱 **Full USB Tethering Support:** Android (RNDIS), Apple iPhone (ipheth / usbmuxd), generic CDC-Ethernet, modern CDC-NCM, Huawei NCM, and Qualcomm QMI / CDC-MBIM 4G/5G modems with plug-and-play network routing.
@@ -64,9 +69,13 @@ This repository tracks the latest upstream OpenWrt platform tree with EcoNet / A
 
 ---
 
-## GPON Fiber WAN (xPON Port) 🆕
+## GPON Fiber WAN (xPON Port) [WIP / NOT WORKING]
 
-The JCOW414 is a GPON ONT, and this build now drives the fiber port natively instead of relying on USB tethering as the only WAN. The GPON stack is a port of [OpenWrt PR #24577](https://github.com/openwrt/openwrt/pull/24577) (EN7528 xPON driver + OMCI daemon), carried as [`patches/0001-econet-xpon-jcow414.patch`](patches/0001-econet-xpon-jcow414.patch) on top of upstream OpenWrt main:
+> [!CAUTION]
+> # **⚠️ GPON STILL DOES NOT WORK AND IS STUCK AT LEVEL O3**
+> **Do not flash this build expecting functional GPON fiber Internet.** On the Sercomm JCOW414, the GPON state machine currently fails registration and remains **stuck at level O3 (Serial_Number)**. It does **NOT** reach O5 (Operation State) and no traffic passes over fiber. USB tethering is currently the only functional WAN path.
+
+The JCOW414 is a GPON ONT, and this repository includes experimental support for the fiber port. The GPON stack is a port of [OpenWrt PR #24577](https://github.com/openwrt/openwrt/pull/24577) (EN7528 xPON driver + OMCI daemon), carried as [`patches/0001-econet-xpon-jcow414.patch`](patches/0001-econet-xpon-jcow414.patch) on top of upstream OpenWrt main:
 
 * **`kmod-econet-xpon`** — GPON MAC + optical front-end driver (vendor `tclinux_phoenix` GPL source ported to kernel 6.18). Exposes the `ponwan0` WAN netdev with the GEM/T-CONT datapath and the GPON activation state machine.
 * **`econet-omcid`** — native userspace OMCI daemon that answers the OLT and programs the datapath (replaces the non-redistributable stock `omci_v2` binary).
@@ -88,9 +97,7 @@ uci commit econet-xpon
 reboot
 ```
 
-After reboot the module loads with your identity; check `cat /sys/class/net/ponwan0/` (or the LuCI GPON page) for the GPON state — **O5** means the OLT has activated the ONU and OMCI provisioning is running. The `pon` interface (DHCP on `ponwan0`, metric 5) is the primary WAN; the USB tethering interfaces remain configured as fallbacks (higher metrics).
-
-> ⚠️ **Status:** the driver reaches O5 + full OMCI handshake on real fiber per the upstream PR (tested on a DASAN H660GM-A against a live OLT). The OMCI daemon currently models a DZS-baseline MIB — Jio's OLT profile (VLAN plan, T-CONT/GEM mapping) may need tuning via the daemon's datapath controls. Report what your OLT does before assuming internet-over-fiber works end-to-end.
+> ⚠️ **Current Status:** **GPON STILL DOES NOT WORK AND IS STUCK AT LEVEL O3.** While the upstream reference code reached O5 on a DASAN H660GM-A against a live OLT, on the JCOW414 hardware the ONU state machine stalls in O3 during PLOAM registration and fails to transition to O4/O5. Fiber Internet WAN is therefore **NOT functional** at this time. USB tethering remains the only operational WAN uplink.
 
 ---
 
