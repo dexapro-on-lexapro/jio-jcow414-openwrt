@@ -8,11 +8,11 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OPENWRT_DIR="${SCRIPT_DIR}/openwrt-source"
-OUTPUT_DIR="${SCRIPT_DIR}/output"
+OPENWRT_DIR="${OPENWRT_DIR:-${SCRIPT_DIR}/openwrt-source}"
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/output}"
 
 UPSTREAM_REPO="https://github.com/openwrt/openwrt.git"
-UPSTREAM_BRANCH="main"
+UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-main}"
 
 echo "=================================================================="
 echo "    Building Independent OpenWrt Firmware for JioFiber JCOW414    "
@@ -56,7 +56,16 @@ if [ -d "${SCRIPT_DIR}/patches" ]; then
     for p in "${SCRIPT_DIR}"/patches/*.patch; do
         [ -e "$p" ] || continue
         echo "[*] Applying $(basename "$p")..."
-        git apply "$p" 2>/dev/null || patch -p1 < "$p"
+        if git apply --check "$p" 2>/dev/null; then
+            git apply "$p"
+        elif git apply --reverse --check "$p" 2>/dev/null; then
+            echo "[*] $(basename "$p") is already applied."
+        elif [ -d "package/kernel/econet-xpon" ]; then
+            echo "[*] $(basename "$p") is already integrated in source tree."
+        else
+            echo "[-] Error: $(basename "$p") does not apply cleanly to this source tree."
+            exit 1
+        fi
     done
 fi
 
@@ -75,13 +84,17 @@ fi
 echo "[*] Generating .config from seed.config..."
 cp "${SCRIPT_DIR}/seed.config" "${OPENWRT_DIR}/.config"
 make defconfig
+if ! grep -qx 'CONFIG_TARGET_econet_en7528_DEVICE_jiofiber_jcow414=y' .config; then
+    echo "[-] Error: defconfig did not select the JCOW414 device."
+    exit 1
+fi
 
 # Step 5: Download build dependencies
 echo "[*] Downloading sources and packages..."
 make download -j8
 
 # Step 6: Compile firmware
-NPROC=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+NPROC=${BUILD_JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}
 echo "[*] Compiling firmware using ${NPROC} parallel jobs..."
 make -j"${NPROC}" || {
     echo "[-] Parallel build failed, attempting single-thread build with verbose logging..."
@@ -98,11 +111,15 @@ if [ -n "${TRX_FILES}" ]; then
         cp "$img" "${OUTPUT_DIR}/"
         echo "    -> ${OUTPUT_DIR}/$(basename "$img")"
     done
+    find bin/targets/econet/en7528/ -maxdepth 1 -type f \
+        \( -name '*jiofiber_jcow414*initramfs*.bin' -o -name '*jiofiber_jcow414*sysupgrade.bin' \) \
+        -exec cp {} "${OUTPUT_DIR}/" \;
     cd "${OUTPUT_DIR}"
-    sha256sum *.trx > sha256sums 2>/dev/null || shasum -a 256 *.trx > sha256sums 2>/dev/null
+    sha256sum *.trx *.bin > sha256sums 2>/dev/null || shasum -a 256 *.trx *.bin > sha256sums 2>/dev/null
     echo "[+] Checksums generated in ${OUTPUT_DIR}/sha256sums"
 else
-    echo "[-] Warning: No .trx file found in bin/targets/econet/en7528/."
+    echo "[-] Error: No JCOW414 .trx file found in bin/targets/econet/en7528/."
+    exit 1
 fi
 
 echo "=================================================================="

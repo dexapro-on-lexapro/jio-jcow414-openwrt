@@ -1,0 +1,5 @@
+.git
+openwrt-source
+output
+release_artifacts
+*.log

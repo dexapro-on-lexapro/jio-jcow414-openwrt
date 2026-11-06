@@ -32381,7 +32381,7 @@ new file mode 100644
 index 00000000..28ec3339
 --- /dev/null
 +++ b/package/kernel/econet-xpon/src/phy/inc/phy_init.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,34 @@
 +#ifndef _PHY_INIT_H_
 +#define _PHY_INIT_H_
 +
@@ -32394,6 +32394,9 @@ index 00000000..28ec3339
 +int xpon_phy_start(void) ;
 +int pon_phy_init(void) ;
 +void pon_phy_deinit(void) ;
++int phy_tx_gpio_init(void);
++void phy_tx_gpio_cleanup(void);
++void phy_tx_ctl(unchar val);
 +void phy_los_handler(void) ;
 +void phy_ready_handler(void) ;
 +
@@ -40806,7 +40809,7 @@ new file mode 100644
 index 00000000..35a89bbf
 --- /dev/null
 +++ b/package/kernel/econet-xpon/src/phy/src/phy_init.c
-@@ -0,0 +1,3708 @@
+@@ -0,0 +1,3703 @@
 +/*
 +* File Name: phy_init.c
 +* Description: Initialization for xPON PHY
@@ -40941,7 +40944,7 @@ index 00000000..35a89bbf
 + * = the low-launch-power service-admission wall. The OLD dual_loop block wrote |0x01 (ERC_start=closed-loop,
 + * the WRONG mode) and was default-off. 1 = enable DAC-follow at apc_bringup (THE FIX). Pairs with apc_target
 + * (the 1Hz MPD-hold loop that ramps 0x138 = stock en7571_Pavg_close_loop). */
-+int erc_openloop = 0;      module_param(erc_openloop, int, 0644);
++int erc_openloop = 1;      module_param(erc_openloop, int, 0644);
 +/* NOTE (2026-07-05): tested mainline's G_PLOu_PRMBL_TYPE3 ebl_en@bit16 (vs our vendor headers' bit24)
 + * via a t3_ebl16 param — HW REFUTED it: wrote=01010f77 read back 01000f77, i.e. EN7528 CLEARS bit16
 + * (read-only-0); bit24 is the real ebl_en and is already set (ebl=1). mainline's bit16 is EN751221-only.
@@ -40954,14 +40957,9 @@ index 00000000..35a89bbf
 + * the pre-lock RX reg_init path, a different context). Test with tx_closeloop=2 tx_force=1 tx_kt=1. */
 +int tx_force = 0;          module_param(tx_force, int, 0644);
 +int tx_kt = 0;             module_param(tx_kt, int, 0644);
-+/* Laser DC bias code (12-bit DAC @ SIF 0x138). Default = LUT room-temp seed 0x1FB, but this
-+ * BOSA's threshold is higher; tune at runtime via /sys/module/econet_xpon/parameters/tx_ibias
-+ * then apply with `echo b > /proc/econet_xpon_los`. Vendor clamp 0xF7F; keep <= 0x666. */
-+int tx_ibias = 0x1FB;      module_param(tx_ibias, int, 0644);
-+/* Laser MODULATION swing code (12-bit DAC @ SIF 0x148). H660 flash-cal reads 0x157, but the
-+ * registered-working Nokia G-140W-F drove Mod=0xc02 (~9x higher) → 0x157 likely UNDER-modulates
-+ * (unslice-able eye at the OLT). Sweep live vs OLT-decodability: echo <v> > tx_imod; echo i > ... */
-+int tx_imod = 0x157;       module_param(tx_imod, int, 0644);
++/* JCOW414 factory laser bias/modulation DACs; also used by manual diagnostics. */
++int tx_ibias = 0x610;      module_param(tx_ibias, int, 0644);
++int tx_imod = 0x0CE;       module_param(tx_imod, int, 0644);
 +/* BIST pattern held by the 'c' continuous-CW command (bench power-meter measurement):
 + * 0x09=ALL1 (solid high), 0x0a=ALL0 (solid low), 0x06=PRBS23. Sweep for the extinction test. */
 +int tx_pat = 0x09;         module_param(tx_pat, int, 0644);
@@ -40974,7 +40972,7 @@ index 00000000..35a89bbf
 +/* tdc_holdover: 1 = engage the TX TDC holdover (stock phy_tx_tdc_holdover, 0xbfaf01f0|=0x20 + 0xbfaf0104|=0x10)
 + * at end of apc_bringup to hold the burst timing reference (kill burst-edge jitter). Port never had it. `echo t`
 + * toggles at runtime. A/B lead for O4-ranging marginality. */
-+int tdc_holdover = 0;      module_param(tdc_holdover, int, 0644);
++int tdc_holdover = 1;      module_param(tdc_holdover, int, 0644);
 +/* txsd_fail_cnt: ★2026-07-09 — counts TRANS_SD_FAIL_INT (transceiver TX signal-detect fail) IRQs. The 407 stock
 + * calibrates the TxSD comparator (en7571_TxSD_level_set); the port never does. Read via /sys during O4 ranging:
 + * if it climbs, an uncalibrated TxSD is mis-asserting (cutting the laser mid-burst) → run the `y` cal. If it
@@ -42632,8 +42630,8 @@ index 00000000..35a89bbf
 + * clear XPON_SETTING bit7 so the MAC's grant-timed burst-enable keys the laser. Open-loop
 + * typical-BOSA power (no per-unit cal, ±few dB); GRANT-TIMED, not continuous. Decode:
 + * ~/407/pon_port_plan/scratchpad/en7571_TX_laser_decode.md */
-+#define EN7571_TX_IBIAS_DEFAULT  0x1FB      /* P0 DC bias current DAC [11:0] (25 C LUT seed) */
-+#define EN7571_TX_IMOD_DEFAULT   0x44D      /* modulation swing current DAC [11:0] */
++#define EN7571_TX_IBIAS_DEFAULT  0x610      /* JCOW414 factory bias DAC */
++#define EN7571_TX_IMOD_DEFAULT   0x0CE      /* JCOW414 factory modulation DAC */
 +
 +/* en7571_change_Ibias @0x36e5c: reg 0x138=Ibias[7:0], 0x139[3:0]=Ibias[11:8]. */
 +static void en7571_set_ibias(u16 ibias)
@@ -42725,11 +42723,11 @@ index 00000000..35a89bbf
 +	 * H660 slot 0x0c = 0x444800AA -> delay 0xAA, T0C 0x48, T1C 0x44. The 0x7F/0x7F guesses
 +	 * mistimed the laser on/off envelope vs the grant window -> OLT burst-CDR couldn't lock
 +	 * our SN burst -> no Assign_ONU_ID -> O3 stall. Use the cal value to match stock. */
-+	u32 tg = 0x444800AAu;                   /* h660_flash_cal slot 0x0c (defined below) */
++	u32 tg = 0x504E00AAu;                   /* JCOW414 factory burst timing */
 +	if (e7_rd(0x08, b, 4)) return;
 +	b[0] = (u8)(tg & 0xff);                 /* 0xAA  T0/T1 delay   */
-+	b[1] = (u8)((tg >> 24) & 0xff);         /* 0x44  T1C turn-off  */
-+	b[2] = (u8)((tg >> 16) & 0xff);         /* 0x48  T0C turn-on   */
++	b[1] = (u8)((tg >> 24) & 0xff);         /* 0x50  T1C turn-off  */
++	b[2] = (u8)((tg >> 16) & 0xff);         /* 0x4E  T0C turn-on   */
 +	b[3] = (u8)(((tg >> 8) & 0xff) & 0xF7 & 0xDF & 0xFE); /* slot byte1(0x00) + clear ERC/reset/method2 */
 +	e7_wr(0x08, b, 4);
 +	if (!e7_rd(0x08, b, 4)) { b[3] |= 0x20;  e7_wr(0x08, b, 4); }               /* TGEN_reset hi */
@@ -42737,26 +42735,24 @@ index 00000000..35a89bbf
 +	if (!e7_rd(0x08, b, 4)) { b[3] = (u8)((b[3] & 0xF7) | 0x08); e7_wr(0x08, b, 4); } /* ERC_enable */
 +}
 +
-+/* ★★ FACTORY OPTICAL CAL for the DASAN H660GM-A (device 24), extracted from its NAND
-+ * (the 400B /tmp/7570_bob.conf blob @0xde10600, GPON magic 0x07050701 @slot 0x94). flash_matrix
-+ * = 100 LE u32; h660_get_flash_reg(byte_off) = matrix[off>>2]. Per-unit crux: slot 0x00/0x04 =
-+ * the DCL MPD power targets the HW servo regulates the laser to; slot 0x0c = burst timing. This
-+ * is PER-UNIT (this specific H660GM-A) — a real port would read /tmp/7570_bob.conf at runtime. */
-+static const u32 h660_flash_cal[100] = {
-+	0x054407ce,0x05230157,0xffffffff,0x444800aa,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0x00260019,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0x00ae5226,0xffffffff,0xffffffff,0xffffffff,0x27100d00,0x03e80148,0x00640020,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
++/* JCOW414 unit factory optical calibration: 100 little-endian words from
++ * reservearea at offset 0x140477. Preserve all slots, including the zero tail. */
++static const u32 jcow414_flash_cal[100] = {
++	0x04a00610,0x04ce00ce,0xffffffff,0x504e00aa,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
++	0x001c000d,0xffffffff,0xffffffff,0x00000002,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
++	0x00a84ce0,0xffffffff,0xffffffff,0xffffffff,0x27100fc0,0x03e80184,0x00640028,0xffffffff,
++	0xffffffff,0x00200034,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
 +	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0x07050701,0xffffffff,0xffffffff,
 +	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
 +	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,
-+	0xffffffff,0xffffffff,0xffffffff,0xffffffff };
-+static u32 h660_get_flash_reg(u32 off) { return (off < 400) ? h660_flash_cal[off >> 2] : 0xffffffffu; }
++	0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,
++	0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,
++	0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,
++	0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,
++	0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,0x00000000,
++	0x00000000,0x00000000,0x00000000,0x00000000,
++};
++static u32 jcow414_get_flash_reg(u32 off) { return (off < 400) ? jcow414_flash_cal[off >> 2] : 0xffffffffu; }
 +static void pack12(u8 *b, u32 hi, u32 lo){ b[0]=hi&0xff; b[1]=(hi>>8)&0xff; b[2]=lo&0xff; b[3]=(lo>>8)&0xff; }
 +
 +/* en7571_load_Tx_cal_data @0x2f8ac: load the per-unit DCL MPD power targets from flash 0/4 into
@@ -42765,12 +42761,12 @@ index 00000000..35a89bbf
 +static void en7571_load_tx_cal_data(void)
 +{
 +	u32 v; u8 b[4], t0, t1;
-+	if (h660_get_flash_reg(0) != 0xffffffffu) {
-+		v = h660_get_flash_reg(0);
++	if (jcow414_get_flash_reg(0) != 0xffffffffu) {
++		v = jcow414_get_flash_reg(0);
 +		pack12(b, (v >> 16) & 0xfff, v & 0xfff); e7_wr(0x24C, b, 4); e7_wr(0x27C, b, 4);
 +	}
-+	if (h660_get_flash_reg(4) == 0xffffffffu) return;
-+	v = h660_get_flash_reg(4);
++	if (jcow414_get_flash_reg(4) == 0xffffffffu) return;
++	v = jcow414_get_flash_reg(4);
 +	pack12(b, (v >> 16) & 0xfff, v & 0x3ff); e7_wr(0x25C, b, 4);
 +	t0 = b[0]; t1 = b[1]; b[0] = b[2]; b[1] = b[3]; b[2] = t0; b[3] = t1; e7_wr(0x280, b, 4);
 +}
@@ -42817,7 +42813,7 @@ index 00000000..35a89bbf
 +	u8 b[4];
 +	if (e7_rd(0x08, b, 4)) return;
 +	if (mode == 1) {
-+		u32 t = h660_get_flash_reg(0x94);
++		u32 t = jcow414_get_flash_reg(0x94);
 +		if      (t == 0x07050701u) b[0] = 0xAA;
 +		else if (t == 0xE7050701u || t == 0xA7050701u) b[0] = 0x77;
 +	} else {
@@ -42854,9 +42850,9 @@ index 00000000..35a89bbf
 +static void en7571_tx_apc_bringup(void)
 +{
 +	u8 b[4]; u32 tv;
-+	if (h660_get_flash_reg(148) != 0x07050701u) {
++	if (jcow414_get_flash_reg(148) != 0x07050701u) {
 +		printk(KERN_DEBUG "en7571_apc: no GPON cal (slot148=0x%x) -> open-loop fixed timing\n",
-+			h660_get_flash_reg(148));
++			jcow414_get_flash_reg(148));
 +		en7571_gpon_burst_timing();
 +		return;
 +	}
@@ -42867,7 +42863,7 @@ index 00000000..35a89bbf
 +	 * hw_reset -> DAC collapse. Match stock: run only if flash[0x90]==1. DCL_start for RX still
 +	 * comes from en7571_reg_init_full (dcl_mode), so skipping this does NOT break O2->O3. */
 +	{ extern int run_scl;
-+	  int do_scl = (run_scl < 0) ? (h660_get_flash_reg(0x90) == 1u) : (run_scl != 0);
++	  int do_scl = (run_scl < 0) ? (jcow414_get_flash_reg(0x90) == 1u) : (run_scl != 0);
 +	  if (do_scl) en7571_single_closed_loop_mode(); }
 +	/* ★★ FIX A/γ (2026-07-04): write the CALIBRATED Ibias/Imod DACs from the flash cal. The port was
 +	 * seeding the RAW generic LUT (Ibias 0x1FB / Imod 0x44D) — Imod 0x44D(1101) is ~3.2x this unit's
@@ -42879,10 +42875,10 @@ index 00000000..35a89bbf
 +	 * ERC counter phase reference seats against a lit laser -> a few-ns edge offset -> marginal ranging.
 +	 * tgen_dark=1 -> hold Ibias=0 (dark) across the TGEN latch (PRBS23 still drives the serializer per FIX 3),
 +	 * restore the calibrated bias AFTER the latch = stock order. tgen_dark=0 = old behavior. */
-+	{ extern int tgen_dark; u16 _im = (u16)(h660_get_flash_reg(4) & 0xfff);   /* Imod 0x157 */
++	{ extern int tgen_dark; u16 _im = (u16)(jcow414_get_flash_reg(4) & 0xfff);   /* JCOW414 Imod 0x0CE */
 +	  en7571_set_imod(_im);
-+	  en7571_set_ibias(tgen_dark ? 0 : (u16)(h660_get_flash_reg(0) & 0xfff)); }   /* Ibias 0x7CE, or 0=dark for H3 */
-+	tv = h660_get_flash_reg(12);             /* slot 0x0c burst timing: [15:0]delay [23:16]T0C [31:24]T1C = 0x444800AA */
++	  en7571_set_ibias(tgen_dark ? 0 : (u16)(jcow414_get_flash_reg(0) & 0xfff)); }   /* JCOW414 Ibias 0x610, or 0=dark for H3 */
++	tv = jcow414_get_flash_reg(12);             /* slot 0x0c burst timing: [15:0]delay [23:16]T0C [31:24]T1C = 0x504E00AA */
 +	/* ★ FIX 3 (2026-07-05, stock en7571_TGEN RE): stock LATCHES the burst envelope (TGEN_reset pulse)
 +	 * WHILE PRBS23 drives the TX serializer and the CDR is forced to REF clock (PHYSET1 bit24=1). The
 +	 * port latched it with the serializer IDLE -> TGEN_reset counters init against no signal -> laser
@@ -42891,7 +42887,7 @@ index 00000000..35a89bbf
 +	  uint _p = IO_GREG(0xbfaf0100u); IO_SREG(0xbfaf0100u, _p | (1u << 24));   /* en7571_CDR(0) */
 +	  phy_tx_test_pattern(PHY_BIST_PRBS23); mdelay(10); }
 +	if (!e7_rd(0x08, b, 4)) {
-+		b[0] = tv & 0xff; b[1] = (tv >> 24) & 0xff; b[2] = (tv >> 16) & 0xff;  /* delay=0xAA, T1C=0x44, T0C=0x48 */
++		b[0] = tv & 0xff; b[1] = (tv >> 24) & 0xff; b[2] = (tv >> 16) & 0xff;  /* delay=0xAA, T1C=0x50, T0C=0x4E */
 +		b[3] &= 0xF7;                        e7_wr(0x08, b, 4);               /* clear ERC_enable */
 +		/* ★ H4 FIX (2026-07-08, wf_71169978 vs stock disasm SETTLE#2 @0x31b34): stock waits ~10ms between
 +		 * writing T0C/T1C and pulsing TGEN_reset hi, letting the timers propagate through the transceiver
@@ -42905,7 +42901,7 @@ index 00000000..35a89bbf
 +		e7_rd(0x08, b, 4); b[3] &= 0xDF;    e7_wr(0x08, b, 4); mdelay(10);   /* TGEN_reset lo */
 +		e7_rd(0x08, b, 4); b[3] |= 0x08;    e7_wr(0x08, b, 4);               /* ERC_enable */
 +	}
-+	{ extern int tgen_dark; if (tgen_dark) en7571_set_ibias((u16)(h660_get_flash_reg(0) & 0xfff)); }  /* ★ H3: apply laser DC bias 0x7CE AFTER the dark TGEN latch (stock order) */
++	{ extern int tgen_dark; if (tgen_dark) en7571_set_ibias((u16)(jcow414_get_flash_reg(0) & 0xfff)); }  /* Apply JCOW414 bias after the dark TGEN latch. */
 +	en7571_T1delay_setting(0);                  /* ★ FIX 4: laser T1 delay byte0 0xAA->0xA0 (stock link_reg(1)->T1delay_setting(0), AFTER timers latch) */
 +	{ extern void phy_tx_test_pattern(uint);
 +	  uint _p = IO_GREG(0xbfaf0100u); IO_SREG(0xbfaf0100u, _p & ~(1u << 24));  /* en7571_CDR(1): back to recovered-data clk */
@@ -43015,6 +43011,7 @@ index 00000000..35a89bbf
 +	e7_rd(0x138, ib, 4); e7_rd(0x148, im, 4);
 +	printk(KERN_DEBUG "en7571_tx: LASER bringup: Ibias=0x%03x Imod=0x%03x burst-timing(en) XPON_SETTING=%08x ANATXREG1=%08x\n",
 +		((ib[1] & 0x0F) << 8) | ib[0], ((im[1] & 0x0F) << 8) | im[0], IO_GREG(0xbfaf0138u), IO_GREG(0xbfaf01a0u));
++	phy_tx_ctl(tx_laser_off ? PHY_DISABLE : PHY_ENABLE);
 +}
 +
 +int gpon_do_lock(int quiet)
@@ -43059,6 +43056,7 @@ index 00000000..35a89bbf
 +	 * AFTER the CDR finalize so it can't perturb the lock. Re-applied on every lock (the
 +	 * bring-up above cleared it via 0x10F), so it sticks across the poll's re-lock attempts. */
 +	if (tx_laser_off) {
++		phy_tx_ctl(PHY_DISABLE);
 +		p = IO_GREG(0xbfaf0138u); IO_SREG(0xbfaf0138u, p | 0x80u);   /* laser held OFF (bit7=1) */
 +	} else {
 +		uint atx;
@@ -44949,7 +44947,7 @@ new file mode 100644
 index 00000000..7a291079
 --- /dev/null
 +++ b/package/kernel/econet-xpon/src/phy/src/phy_tx.c
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,894 @@
 +/*
 +* File Name: phy_tx.c
 +* Description: .
@@ -44957,6 +44955,9 @@ index 00000000..7a291079
 +******************************************************************/
 +
 +#include <linux/kernel.h>
++#include <linux/gpio.h>
++#include <linux/of.h>
++#include <linux/of_gpio.h>
 +#include <linux/slab.h>
 +#include <linux/delay.h>
 +#include <linux/timer.h>
@@ -45715,14 +45716,55 @@ index 00000000..7a291079
 +		return PHY_FAILURE;
 +}
 +
++/* Resolve hardware GPIO 16 through DT; gpiochip bases are assigned dynamically. */
++static int jcow414_tx_disable_gpio = -EINVAL;
++
++int phy_tx_gpio_init(void)
++{
++	struct device_node *np;
++	int gpio, ret;
++
++	if (!of_machine_is_compatible("jiofiber,jcow414"))
++		return 0;
++	np = of_find_node_by_path("/");
++	gpio = of_get_named_gpio(np, "tx-disable-gpios", 0);
++	of_node_put(np);
++	if (!gpio_is_valid(gpio))
++		return gpio < 0 ? gpio : -EINVAL;
++	/* phy_tx_ctl is also called from interrupt/timer paths. */
++	if (gpio_cansleep(gpio))
++		return -EINVAL;
++	ret = gpio_request_one(gpio, GPIOF_OUT_INIT_HIGH, "jcow414-tx-disable");
++	if (ret)
++		return ret;
++	jcow414_tx_disable_gpio = gpio;
++	return 0;
++}
++
++void phy_tx_gpio_cleanup(void)
++{
++	if (gpio_is_valid(jcow414_tx_disable_gpio)) {
++		gpio_set_value(jcow414_tx_disable_gpio, 1);
++		gpio_free(jcow414_tx_disable_gpio);
++		jcow414_tx_disable_gpio = -EINVAL;
++	}
++}
++
 +void phy_tx_ctl(unchar val)
 +{
-+	if(PHY_ENABLE == val) /* enable tx power should turn off tx disable */
-+		ledTurnOff(LED_PHY_TX_POWER_DISABLE);
-+	else if (PHY_DISABLE == val) /* disbale tx power should turn on tx disable */
-+		ledTurnOn(LED_PHY_TX_POWER_DISABLE);
-+	else
++	if (val != PHY_ENABLE && val != PHY_DISABLE) {
 +		PON_PHY_MSG(PHY_MSG_ERR, "PHY Tx ctl type error. \n");
++		return;
++	}
++	if (gpio_is_valid(jcow414_tx_disable_gpio)) {
++		/* TX_DISABLE: enabling drives output 0; disabling drives output 1. */
++		gpio_set_value(jcow414_tx_disable_gpio, val == PHY_ENABLE ? 0 : 1);
++		return;
++	}
++	if (val == PHY_ENABLE)
++		ledTurnOff(LED_PHY_TX_POWER_DISABLE);
++	else
++		ledTurnOn(LED_PHY_TX_POWER_DISABLE);
 +}
 +
 +
@@ -50681,9 +50723,9 @@ index 00000000..a901a563
 +#include <linux/moduleparam.h>
 +/* SESSION 12 burst-TX-timing fix (stock@O5 vs port@O3 MAC-reg diff, 0xbfb64090 block):
 + *   G_PLOu_GUARD_BIT (0x4094): stock=0x18(24), port=0x20(32) <- "FIX 3" copied OLT raw.gbits(0x20);
-+ *     stock IGNORES the OLT gbits and uses const 24. po_gbits default 24 = stock; -1 = old raw.gbits.
++ *     stock IGNORES the OLT gbits and uses const 24. po_gbits defaults to -1 to honor the OLT guard-bit request.
 + *   G_RSP_TIME  (0x40ac): stock=0x577, port=0x58b. po_rsp default 0x577 = stock. */
-+int po_gbits = 24;      module_param(po_gbits, int, 0644);
++int po_gbits = -1;      module_param(po_gbits, int, 0644);
 +int po_rsp   = 0x577;   module_param(po_rsp,   int, 0644);
 +/* sn_vs: if non-zero, override the last 4 (vendor-specific) SN bytes, keeping the "DSNW" vendor prefix,
 + * to test a FRESH/random SN that can't collide with the stock firmware's active OLT session. */
@@ -50994,7 +51036,7 @@ index 00000000..a901a563
 +		PHY_GponPreb_T pon_preb;
 +		PPHY_GponPreb_T p_pon_preb = & pon_preb;
 +		p_pon_preb->mask = PHY_GUARD_BIT_NUM_EN |  PHY_PRE_T1_NUM_EN | PHY_PRE_T2_NUM_EN | PHY_PRE_T3_PAT_EN;
-+		p_pon_preb->guard_bit_num = (po_gbits >= 0) ? po_gbits : pUpOverheadMsg->raw.gbits;   /* SESSION12: stock uses 24, not OLT's 0x20 */
++		p_pon_preb->guard_bit_num = (po_gbits >= 0) ? po_gbits : pUpOverheadMsg->raw.gbits;   /* honor the OLT guard-bit request */
 +		p_pon_preb->preamble_t1_num = pUpOverheadMsg->raw.t1_pbits;   /* FIX 5: was t2 (swapped) */
 +		p_pon_preb->preamble_t2_num = pUpOverheadMsg->raw.t2_pbits;
 +		p_pon_preb->preamble_t3_pat = pUpOverheadMsg->raw.t3_pbits;
@@ -51007,7 +51049,7 @@ index 00000000..a901a563
 +
 +		/* Setting the MAC register */
 +		gponGuardBit.Raw = IO_GREG(G_PLOu_GUARD_BIT) ;
-+		gponGuardBit.Bits.guard_bit = (po_gbits >= 0) ? po_gbits : pUpOverheadMsg->raw.gbits ;   /* SESSION12: stock uses 24 */
++		gponGuardBit.Bits.guard_bit = (po_gbits >= 0) ? po_gbits : pUpOverheadMsg->raw.gbits ;   /* honor the OLT guard-bit request */
 +		IO_SREG(G_PLOu_GUARD_BIT, gponGuardBit.Raw) ;
 +        gpGponPriv->gponCfg.gponGuardBit.Raw = gponGuardBit.Raw;
 +
@@ -63880,7 +63922,7 @@ new file mode 100644
 index 00000000..ade00adf
 --- /dev/null
 +++ b/package/kernel/econet-xpon/src/src/xpondrv.c
-@@ -0,0 +1,3062 @@
+@@ -0,0 +1,3070 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/delay.h>
@@ -63895,6 +63937,7 @@ index 00000000..ade00adf
 +
 +#include "../inc/common/drv_global.h"
 +#include "../inc/common/phy_if_wrapper.h"
++#include "phy_init.h"
 +
 +#include "../inc/epon/epon.h"
 +#include "../inc/epon/epon_mpcp.h"
@@ -66131,6 +66174,7 @@ index 00000000..ade00adf
 +        remove_proc_entry("tc3162", NULL);
 +        xpon_proc_tc3162 = NULL;
 +    }
++    phy_tx_gpio_cleanup();
 +
 +}
 +
@@ -66783,13 +66827,19 @@ index 00000000..ade00adf
 +
 +int xpondrv_init(void)
 +{
++	int gpio_ret = phy_tx_gpio_init();
++	if (gpio_ret) {
++		pr_err("econet-xpon: TX_DISABLE GPIO initialization failed: %d\n", gpio_ret);
++		return gpio_ret;
++	}
 +	printk("xPON driver initialization\n") ;
 +
 +	/* initial the global data memory */
 +	gpPonSysData = (PON_SysData_T *)kmalloc(sizeof(PON_SysData_T), GFP_KERNEL) ;
 +	if(gpPonSysData == NULL) {
 +		printk("Alloc data struct memory failed\n") ;
-+		goto ret ;
++		phy_tx_gpio_cleanup();
++		return -ENOMEM;
 +	} else {
 +		memset(gpPonSysData, 0, sizeof(PON_SysData_T));
 +		printk("Alloc data struct memory successful, %d\n", sizeof(PON_SysData_T)) ;
@@ -68186,7 +68236,7 @@ index 00000000..969c98e4
 +		return 0
 +	fi
 +
-+	line="econet-xpon gpon_sn=$sn"
++	line="econet-xpon erc_openloop=1 tdc_holdover=1 gpon_sn=$sn"
 +	[ -n "$pw" ]  && line="$line gpon_pw=$pw"
 +	[ -n "$mac" ] && line="$line wan_mac=$mac"
 +	echo "$line" > /etc/modules.d/91-econet-xpon
@@ -68195,7 +68245,7 @@ index 00000000..969c98e4
 +	# was just written), bring it up now WITH the identity so this boot ranges
 +	# correctly instead of waiting for the next reboot.
 +	grep -q '^econet_xpon ' /proc/modules || insmod econet-xpon \
-+		gpon_sn="$sn" ${pw:+gpon_pw="$pw"} ${mac:+wan_mac="$mac"} 2>/dev/null
++		erc_openloop=1 tdc_holdover=1 gpon_sn="$sn" ${pw:+gpon_pw="$pw"} ${mac:+wan_mac="$mac"} 2>/dev/null
 +	logger -t econet-xpon "autoload synced: $line"
 +}
 +
@@ -68652,6 +68702,19 @@ index 7affa043..82c531c1 100644
 +  IMAGE/tclinux.trx := append-kernel | lzma | tclinux-trx
 +endef
 +TARGET_DEVICES += jio_jcow407
+diff --git a/target/linux/econet/dts/en7528_jiofiber_jcow414.dts b/target/linux/econet/dts/en7528_jiofiber_jcow414.dts
+--- a/target/linux/econet/dts/en7528_jiofiber_jcow414.dts
++++ b/target/linux/econet/dts/en7528_jiofiber_jcow414.dts
+@@ -7,6 +7,9 @@
+ 	model = "JioFiber JCOW414";
+ 	compatible = "jiofiber,jcow414", "econet,en7528";
+ 
++	/* TX_DISABLE is active high: 0 enables the optical transmitter. */
++	tx-disable-gpios = <&pinctrl 16 GPIO_ACTIVE_HIGH>;
++
+ 	aliases {
+ 		led-boot = &led_status_red;
+ 		led-failsafe = &led_status_red;
 -- 
 2.54.0 (Apple Git-157)
 

@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
     bison \
     g++ \
     gawk \
-    gcc-multilib \
     gettext \
     git \
     libncurses5-dev \
@@ -23,6 +22,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     sudo \
     curl \
+    && if [ "$(dpkg --print-architecture)" = amd64 ]; then apt-get install -y gcc-multilib; fi \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash builder && \
