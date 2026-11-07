@@ -1,161 +1,123 @@
-# Sercomm JioFiber JCOW414 OpenWrt GPON: Agent Handover Report
+# Sercomm JioFiber JCOW414 OpenWrt GPON: Agent Handover Report (R2)
 
-**Target Device:** Sercomm JCOW414 (EcoNet / Airoha EN7528HU, MIPS 24KEc, `mipsel_24kc`)  
-**Kernel:** Linux 6.18.60 (OpenWrt `main`, target `realtek` / subtarget `en75xx`)  
-**Current State:** Downstream locked (`rdy=6`, `rx_sync=0xa`), cycling **O2** $\leftrightarrow$ **O3** (stalling at Serial Number state)  
-**Target State:** **O5 (Operational)**  
-**Remote Build Server:** `Host kaveri` (`ssh kaveri`) with container `/tmp/dwaipa-build/workspace`  
-**Live Router Access:** `ssh root@192.168.1.1` (Passwordless SSH key, interface `en5`)
-
----
-
-## 1. Prime Directives & Hard Constraints
-
-> [!CAUTION]
-> **NEVER flash, write, or touch Bank 2 (`tclinux_slave`, `mtd5`).**  
-> Bank 2 contains the pristine factory Sercomm firmware and is the sole unbrick recovery mechanism. All testing and flashing MUST be confined to Bank 1 (`tclinux`, `mtd2`).
-
-> [!IMPORTANT]
-> **Zero Local Compilations:**  
-> Never run builds, toolchain builds, or kernel compilations on the macOS workstation. All building must be dispatched via SSH to the remote Linux build container on **Kaveri** (`Host kaveri`).
+**Date:** 2026-11-07 (end of session 2 — supersedes the R1 handover entirely)  
+**Target Device:** Sercomm JCOW414 (EcoNet/Airoha EN7528HU, MIPS 1004Kc, `mipsel_24kc`)  
+**Kernel:** Linux 6.18.60 (OpenWrt `main`, target `econet` / subtarget `en7528`, `econet-xpon` driver)  
+**Current State:** Downstream locked (`rdy=6`, `rx_sync=0xa`), cycling O2 ↔ O3. **The OLT now hears our bursts** (proven by 4+ continuous SN requests, ExtBurstLength handling, and TxMon rising to 12985) but still never sends `Assign_ONU_ID` (PLOAM msg `0x03` in this driver's enum — never once received).  
+**Target State:** O5 (Operational)  
+**Remote Build:** Host `kaveri` (`ssh kaveri`), Docker image `jcow414-builder:local`, tree `/tmp/dwaipa-build/workspace/openwrt-source`  
+**Live Router:** `ssh root@192.168.1.1` (OpenWrt Bank 1) / `ssh root@192.168.29.1` (Stock Bank 2 with Dropbear). Currently running OpenWrt with kernel module `ko8` deployed.
 
 ---
 
-## 2. Breakthrough Findings from This Session
+## 0. Prime Directives (STRICT)
 
-### 2.1. The "Dark Laser" Bias Current Threshold
-* **The Problem:** The driver previously initialized $I_{\text{bias}}$ to `0x610` (1552 decimal) from calibration flash slot 0 (`jcow414_get_flash_reg(0)`).
-* **The Discovery:** Live optical power readout (`echo B > /proc/econet_xpon_los`) showed:
-  ```text
-  en7571_tx: dark=1028 lit=1032 net=4 => DARK
-  en7571_tx: ramp Ibias=0x610 txpwr=1030 dark=1029 net=1
-  en7571_tx: ramp Ibias=0x630 txpwr=3219 dark=1029 net=2190 *** LASING ***
-  ```
-* **Interpretation:** At `0x610`, the laser diode had NOT reached threshold current. `net = 1` count above dark floor meant the router was transmitting an optical phantom with virtually zero physical photons.
-* **The Fix:** Setting $I_{\text{bias}} \ge \text{0x630}$ (1584 decimal) ignites the laser, giving `txpwr = 3219`, `net = 2190` counts above dark floor.
-
-### 2.2. Modulation Current & Optical Extinction Ratio Alignment
-* **The Discrepancy:** The OpenWrt driver held modulation current $I_{\text{mod}}$ at `0x0CE` (206 decimal), yielding an MPD current of `0x71` (113).
-* **Stock Baseline at O5:** Stock logged `STOCKCMP: BiasCurrent~0x1a9 ModulationCurrent~0x813 MPDCurrent~0x109`.
-* **The Alignment:** Elevating $I_{\text{mod}}$ to `0x813` (2067 decimal) via sysfs + `echo i > /proc/econet_xpon_los` elevated the live MPD current to `0xFA` (250), matching stock O5 within 5.6%:
-  ```text
-  STOCKCMP: BiasCurrent=0x630 ModulationCurrent=0x813 MPDCurrent=0xfa RSSI=0x0 Temp=0x1f1 VCC=0x261 | stock@O5: Bias~0x1a9 Mod~0x813 MPD~0x109
-  ```
-* `TxMon` reading jumped from 4,963 to 7,720.
-
-### 2.3. SerDes Digital Swing (`ANATXREG1`)
-* Live OpenWrt driver had defaulted `ANATXREG1[19:16]` to 9 (`0x00990006`).
-* Disassembly of stock `xpon.ko` (`xpon_decompiled.c`) confirmed stock firmware leaves `ANATXREG1[19:16] = 0` (`0x00900006`).
-* Configured `tx_amp = 0` via sysfs and applied via `echo l > /proc/econet_xpon_los`.
+1. **NEVER flash, write, or touch Bank 2** (`tclinux_slave`, **mtd5** on this device — always verify by NAME via `cat /proc/mtd`, public repos disagree on numbering). Bank 2 = pristine stock R2.52.1, sole unbrick path. **Booting** Bank 2 is fine and is the project's reference oracle.
+2. **Zero local compilations on macOS.** All builds must take place in the Kaveri Docker container `jcow414-builder:local` (tree owned by user `csthps`; patch/build via `docker run -v` mounts).
+3. **Bank 1 only** (`tclinux`, `mtd2`) for any flash write. All module deploys this session used **overlay copy-up** of `/lib/modules/6.18.60/econet-xpon.ko` + reboot — zero mtd writes needed.
 
 ---
 
-## 3. Hardware Architecture & Register Memory Map
+## 0.5 Access & Operational Map
 
-### 3.1. GPON MAC CSR Base (`0xBFB64000`)
-
-| Offset | Register Name | Live Value | Purpose |
-|---|---|---|---|
-| `0x4008` | `G_INT_STATUS` | `0x00000000` | MAC interrupt status (W1C) |
-| `0x400C` | `G_INT_ENABLE` | `0x77ff0bfd` | MAC interrupt mask |
-| `0x4094` | `G_PLOu_GUARD_BIT` | `0x00000020` | Guard bits (32 bits) |
-| `0x409C` | `G_PLOu_PRMBL_TYPE3` | `0x01003779` | `ebl_en=1`, `o5_num=55`, `o3_o4_num=121` |
-| `0x40A0` | `G_PLOu_DELM_BIT` | `0x00000018` | Upstream delimiter length (24 bits = 3 bytes) |
-| `0x40AC` | `G_RSP_TIME` | `0x00000577` | ONU response time (1399 clocks = $35\,\mu\text{s}$) |
-| `0x40B0` | `G_VENDOR_ID` | `0x53434f4d` | "SCOM" (Sercomm) |
-| `0x40B4` | `G_VS_SN` | `0x994cf513` | Serial number `99:4C:F5:13` |
-| `0x40B8` | `G_SN_MSG_CFG` | `0x0a0000XX` | `sn_req_thr=10`, `tx_power_mode=0`, random delay |
-| `0x40BC` | `G_ACTIVATION_ST` | `0x00000003` | Current activation state (3 = O3) |
-| `0x4208` | `DBG_DLY` | `0x001c1c0d` | $\text{fine\_int\_dly} = 28$ (`0x1C`), $\text{phy\_tx\_dly} = 13$ (`0x0D`) |
-| `0x4310` | `TX_BST_COUNTER` | Increments +3/cycle | Hardware upstream burst counter |
-| `0x4358` | `DS_SPF_CNT` | Steady +8000/s | Downstream superframe counter ($125\,\mu\text{s}$ interval) |
-
-### 3.2. A60928 / EN7571 Optical Transceiver Registers (SIF I2C Dev `0x70`)
-
-| SIF Sub | Register Name | Value | Purpose |
-|---|---|---|---|
-| `0x08` | `Burst Timing` | `0x084e50a0` | `delay=0xA0`, $T_{1C}=\text{0x50}$, $T_{0C}=\text{0x4E}$, `ERC_en=1` |
-| `0x138` | `P0_CS2` ($I_{\text{bias}}$) | `0x0630` | Laser DC bias DAC (lasing threshold crossed) |
-| `0x148` | `P1_CS2` ($I_{\text{mod}}$) | `0x0813` | Laser modulation current DAC (stock O5 matched) |
-| `0xbfaf0138` | `XPON_SETTING` | `0x0000010f` | Transceiver burst-enable polarity & Tx_SD invert |
-| `0xbfaf01a0` | `ANATXREG1` | `0x00900006` | SerDes TX drive swing `[19:16] = 0` (stock value) |
+| Task | Procedure / Trap |
+|---|---|
+| **Which bank is up** | `ping 192.168.1.1` (OpenWrt) vs `ping 192.168.29.1` (Stock). The device flip-flops banks after watchdog crashes — check first, every time. |
+| **Bootflag** | ASCII `'0'`=OpenWrt / `'1'`=Factory at **reservearea (mtd12) offset 0x200000**. OpenWrt: `/sbin/en75_chboot factory\|openwrt`. Stock: `/usr/bin/sys bootflag swap` / `boot read`. |
+| **Stock root** | Root password does NOT survive stock reboots. Re-arm via `JFC-Group/JFxploit` (uv): `uv run jfxploit run 192.168.29.1 --exploit f01 --action telnet --action iptables --action rootpass -r 'testnet@00'`. |
+| **Stock SSH** | Dropbear persists at `/flash2/dropbear` (+ `id_dropbear`). Run `/flash2/dropbear -p 22 -r /flash2/id_dropbear`. Password auth `testnet@00` works over SSH. (Telnet mangles lines >80 chars). |
+| **Stock `/dev/mem`** | `/dev/mem` needs `mknod /dev/mem c 1 1` **every stock boot** (devtmpfs). `devmem` takes PHYSICAL addresses (KSEG1 `0xBxxx_xxxx` − `0xA0000000`). |
+| **Deploy kmod to OpenWrt** | `scp ko.ko root@192.168.1.1:/tmp/` then **separate ssh**: `cp /tmp/ko.ko /lib/modules/6.18.60/econet-xpon.ko; md5sum both; sync; reboot` (reboot as last command, **no `& exit`** — backgrounded chains get SIGHUP'd and silently abort). |
+| **Build inside Docker** | `docker run --rm -v /tmp/dwaipa-build/workspace:/home/builder/workspace -v /tmp/dwaipa-build:/hostbuild --entrypoint bash jcow414-builder:local -c 'python3 /hostbuild/patch.py && cd /home/builder/workspace/openwrt-source && make package/kernel/econet-xpon/clean && make package/kernel/econet-xpon/compile -j1'` — Note: `clean` and `compile` must be separate make invocations. |
+| **PLOAM logging** | `echo 1 > /sys/module/econet_xpon/parameters/ploam_verbose` — **mandatory**: with 0, the PLOAM-DS log skips `dest_id=0xff` broadcasts (`gpon_dev.c:80`), and `Assign_ONU_ID` IS a broadcast! |
+| **Laser re-arm on OpenWrt** | `echo 182 > /sys/module/econet_xpon/parameters/tx_ibias; echo 625 > /sys/module/econet_xpon/parameters/tx_imod; echo b > /proc/econet_xpon_los; echo i > /proc/econet_xpon_los` (verified live via `Y` handler: `Ibias DAC=0x0B6`, `Imod DAC=0x271`). |
 
 ---
 
-## 4. Live Control Handlers (`/proc/econet_xpon_los`)
+## 1. Causal Architecture & Root Causes Solved
 
-Writing single characters to `/proc/econet_xpon_los` invokes specific diagnostics:
+### 1.1 Stock Reference Ground Truth (The Oracle)
+* Bank 2 (stock R2.52.1) achieves **O5 live on this fiber**:
+  * ONU ID: `26`, Serial Number: `SCOM994cf513`, PLOAM Password: `00000001`, WAN IP: `10.25.48.15/21` on `bdg1`, OLT Vendor ID: `ALCL` (Nokia 7360 ISAM).
+  * Fiber optics, whitelist, and serial registration are 100% operational.
 
-* `echo B > /proc/econet_xpon_los`: Test laser emission; if dark, ramps $I_{\text{bias}}$ to lasing (`0x630`).
-* `echo u > /proc/econet_xpon_los`: Read out live DACs, DCL state, and `STOCKCMP` comparison vs stock O5.
-* `echo Y > /proc/econet_xpon_los`: Dump active burst envelope (`reg 0x08`), $I_{\text{bias}}$, $I_{\text{mod}}$, and `TxMon`.
-* `echo i > /proc/econet_xpon_los`: Apply `tx_imod` module parameter to SIF register `0x148` live.
-* `echo b > /proc/econet_xpon_los`: Apply `tx_ibias` module parameter to SIF register `0x138` live.
-* `echo p > /proc/econet_xpon_los`: Apply `tx_xpon` module parameter to `XPON_SETTING` (`0xbfaf0138`) live.
-* `echo l > /proc/econet_xpon_los`: Re-run `en7571_tx_laser_bringup()` (applies timing latch, seeds DACs).
-* `echo f > /proc/econet_xpon_los`: Read 3-second delta of frame and burst counters.
-* `echo 1 > /proc/econet_xpon_usdbg`: Dump all GPON MAC CSR registers (`0x4000` to `0x43C4`) into dmesg.
+### 1.2 ROOT CAUSE #1: `G_MBI_STOP = 0x101` (Transmitter Hard-Stopped)
+* **Mechanism:** `G_MBI_STOP` (MAC CSR `0x4160`): bit 0 = `mbi_rx_stop`, bit 8 = `mbi_tx_stop`. The OpenWrt driver was leaving this register at `0x101` (both TX and RX stopped).
+* **Cause:** Set at `gpon_init.c:195`, only restarted inside `gpon_enable()` on the phy-ready path of the reset scheduler (`handle_xpon_daemon_job_gpon_dev_reset`). If downstream lost sync during reset, it took the O1 branch and MBI stayed dead forever.
+* **Fix (ko8):** The reset scheduler now unconditionally executes `gponDevMbiStop(XPON_DISABLE)`, and `0x4160 = 0x00000000` is enforced at O3 entry in `gpon_act.c`.
+* **Verification:** `0x4160 = 0x00000000` verified live at every O3 entry.
+
+### 1.3 ROOT CAUSE #2: Unprogrammed PHY Burst Block (`0x1FAF0400–0x0408`)
+* **Mechanism:** A distinct physical-layer burst-framing block shapes upstream bursts:
+  * `0x1faf0400` GPON_PREAMBLE: `0xAA000014` (pattern `0xAA`, guard `20`)
+  * `0x1faf0404` DELIMITER_GUARD: `0xAAAB6073` (Nokia OLT delimiter `AA AB 60` + flag `0x73`)
+  * `0x1faf0408` EXTEND_PREAMBLE: `0x00073779` (T3 preamble engine)
+* **Port Bug:** OpenWrt had `0x0408 = 0x00000000` (extended burst engine completely disabled), causing SN bursts to transmit without extended preambles.
+* **Fix (ko8):** Enforced `0x0400 = 0xAA000014`, `0x0404 = 0xAAAB6073`, `0x0408 = 0x00073779` at O3 entry.
+
+### 1.4 Additional Critical Corrections in ko8
+* `G_GBL_CFG (0x4004)`: Stock O3 = `0x000000D4` (`sr_blk_size=212`). Port had `0x34`. Forced `0xD4`. (Note: bit 16 `0x100` is for O5 only; do not set in O3).
+* `0x1faf0264 (SW_RDI)`: Port had bit 4 set. Stock is `0x27101100`. Forced.
+* `sn_pwr` pinned to `0` (stock `DrvPowerLevel=0`). Port default `-1` stepped power levels 0→1→2 through uninitialized P1/P2 DACs.
 
 ---
 
-## 5. Immediate Playbook for Next Agent
+## 2. Stock Binary Reverse Engineering & Optical Disassembly
 
-### Step 1: Verify Hardware Link & Restore Optical Calibration
-Connect over SSH and ensure the laser is lasing with stock modulation:
-```bash
-ssh root@192.168.1.1 "
-echo B > /proc/econet_xpon_los
-echo 2067 > /sys/module/econet_xpon/parameters/tx_imod
-echo i > /proc/econet_xpon_los
-echo 0 > /sys/module/econet_xpon/parameters/tx_amp
-echo u > /proc/econet_xpon_los
-dmesg | tail -n 8
-"
-```
-Verify the output confirms:
-* `Ibias=0x630`
-* `Imod=0x813`
-* `MPDCurrent` between `0xEC` and `0xFA`
-* `rdy=6, act_st=O3`
+Stock firmware binaries extracted from Bank 2 rootfs (`bank2-extract/rootfs/lib/modules/`):
+* `xpon.ko` (458 KB, unstripped, 2,011 symbols): GPON MAC and state machine.
+* `phy.ko` (445 KB, unstripped): Optical transceiver controller and A60928/EN7571 driver.
+* `sif.ko` (42 KB, unstripped): Hardware SIF master controller driver (`0xBFBF8000`).
 
-### Step 2: Sweep Serialization Delay Knobs (`po_finetune` & `po_phytxdly`)
-Because optical power and modulation amplitude are now verified, the OLT is likely dropping the burst due to timing window arrival (arrival phase relative to the OLT quiet window grant).
+### Key Findings from Disassembly:
+1. `gpon_sn_request_threshold_crossed` (@ `0x114b0` in `xpon.ko`):
+   * Literal no-op (`jr ra; nop`). The port's power-mode stepping was invented and has been neutralized.
+2. `en7571_DCL_start` (@ `0x2bc8c` in `phy.ko`):
+   * Unconditionally called at step 27 of `en7571_init` (@ `0x2ab90`).
+   * Reads reg `0x228`, sets bit 0 of byte 1 (`0x229[0]=1`), and writes back 4 bytes to `0x228`.
+   * In `phy_init.c:1810`, the OpenWrt port had wrapped this call in `if (dcl_mode)` with `dcl_mode` defaulted to 0. Stock **always** starts DCL!
+3. `en7571_T1delay_setting` (@ `0x3c5e8` in `phy.ko`):
+   * Sets low nibble of SIF reg `0x08` to `0xA0` (clearing `0xAA` to `0xA0`), exactly matching the live stock read `08 4E 50 A0`.
 
-Execute a sweep across `po_finetune` (0 to 48 in steps of 4):
-```bash
-ssh root@192.168.1.1 "
-for fine in 0 8 16 20 24 28 32 36 40 48; do
-    echo \$fine > /sys/module/econet_xpon/parameters/po_finetune
-    echo === Testing po_finetune=\$fine ===
-    sleep 12
-    dmesg | grep -E 'RNGDBG|Assign_ONU_ID|PONLED: O4|PONLED: O5' | tail -n 5
-done
-"
-```
+---
 
-### Step 3: Hardcode Working Defaults in Kernel Module
-In `jio-jcow414-openwrt/patches/0001-econet-xpon-jcow414.patch`:
-At line 42878 (`en7571_tx_apc_bringup`):
-```c
-// Change from:
-u16 _im = (u16)(jcow414_get_flash_reg(4) & 0xfff);
-en7571_set_imod(_im);
-en7571_set_ibias(tgen_dark ? 0 : (u16)(jcow414_get_flash_reg(0) & 0xfff));
+## 3. Register Verification Table (O3 Active State)
 
-// To:
-u16 _im = (tx_imod > 0) ? (u16)(tx_imod & 0xfff) : 0x813;
-u16 _ib = (tx_ibias > 0) ? (u16)(tx_ibias & 0xfff) : 0x630;
-en7571_set_imod(_im);
-en7571_set_ibias(tgen_dark ? 0 : _ib);
-```
-And ensure `tx_amp` defaults to `0`.
+| Register | Address / Bus | Stock Live Value | OpenWrt ko8 | Verification |
+|---|---|---|---|---|
+| `G_GBL_CFG` | `0xBFB64004` | `0x000000D4` | `0x000000D4` | Verified |
+| `G_PLOu_GUARD_BIT` | `0xBFB64094` | `0x00000014` (20 bits) | `0x00000014` | Verified |
+| `G_PLOu_T3` | `0xBFB6409C` | `0x01003779` | `0x01003779` | Verified |
+| `G_MBI_STOP` | `0xBFB64160` | `0x00000000` | `0x00000000` | Verified |
+| `DBG_DLY` | `0xBFB64208` | `0x800E1440` | `0x800E1440` | Verified |
+| `GPON_PREAMBLE` | `0xBFAF0400` | `0xAA000014` | `0xAA000014` | Verified |
+| `DELIMITER_GUARD`| `0xBFAF0404` | `0xAAAB6073` | `0xAAAB6073` | Verified |
+| `EXTEND_PREAMBLE`| `0xBFAF0408` | `0x00073779` | `0x00073779` | Verified |
+| SIF Reg `0x08` | SIF `0x70` Reg 8 | `08 4E 50 A0` | `08 4E 50 A0` | Verified |
+| SIF Reg `0x138` | SIF `0x70` Reg 0x138 | DAC `0x0B6` (182) | DAC `0x0B6` | Verified |
+| SIF Reg `0x148` | SIF `0x70` Reg 0x148 | DAC `0x271` (625) | DAC `0x271` | Verified |
+| `ANATXREG1` | `0xBFAF01A0` | `0x00900006` | `0x00900006` | Verified |
 
-### Step 4: Remote Build on Kaveri & Flash Bank 1
-```bash
-ssh kaveri "
-cd /tmp/dwaipa-build/workspace/jio-jcow414-openwrt
-# apply patch updates
-# make package/kernel/econet-xpon/compile -j$(nproc)
-"
-```
-SCP the built package or sysupgrade image to router Bank 1 (`tclinux`, `mtd2`), verify boot, and inspect dmesg for O5 transition (`PONLED: O5 -> GREEN(operational)`).
+---
+
+## 4. Evaluation of `AKoo7/openwrt-econet-gpon`
+
+* **Repository:** `https://github.com/AKoo7/openwrt-econet-gpon` (branch `h660gm-a-gpon-o5`)
+* **Relevance:**
+  1. Contains device tree `target/linux/econet/dts/en7528_jio_jcow407.dts` which matches JCOW414 flash partition layout (`bootloader@0`, `tclinux@0x80000 (0x2800000)`, `tclinux_slave@0x2880000`, `reservearea@0xddc0000`).
+  2. Demonstrates successful upstream OpenWrt PR #24577 integration for Dasan H660GM-A reaching O5 on Airtel GPON.
+  3. Includes `luci-app-econet-xpon` for Web UI configuration of GPON parameters.
+* **Caveat:** Dasan H660GM-A uses an external SFP or different BOSA front-end (MT7570). The Sercomm JCOW414's internal A60928/EN7571 optical front-end is distinct and relies on the SIF protocol reverse-engineered from stock Sercomm `phy.ko`/`sif.ko`.
+
+---
+
+## 5. Immediate Next Playbook
+
+1. **Step 1: Enable DCL Servo Start (`en7571_DCL_start`):**
+   * Update `en7571_reg_init_full()` in `phy_init.c` to start DCL unconditionally (or boot with `dcl_mode=1`).
+2. **Step 2: Optical Init Sequence Verification:**
+   * Verify whether `en7571_TxSD_level_set` or `en7571_load_tx_cal_data` needs to run after laser bring-up.
+3. **Step 3: Test on Live Router:**
+   * Reconnect Ethernet cable (`en5`).
+   * Compile on Kaveri, deploy to router, monitor with `echo 1 > /sys/module/econet_xpon/parameters/ploam_verbose`.
+   * Await `Assign_ONU_ID` $\rightarrow$ `o5_eqd_adj_done_int` $\rightarrow$ **`PONLED: O5 -> GREEN(operational)`**.
